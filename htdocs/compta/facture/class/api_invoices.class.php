@@ -157,6 +157,22 @@ class Invoices extends DolibarrApi
 			throw new RestException(404, 'Invoice not found');
 		}
 
+		return $this->_renderInvoice($contact_list);
+	}
+
+	/**
+	 * Build the API representation of the invoice loaded into $this->invoice
+	 *
+	 * The invoice must have been fetched (or just created) before the call, so that its lines are loaded.
+	 *
+	 * Warning: the 'lire' permission is NOT checked here. Callers must check it themselves so a create
+	 * request is never answered with a 403 once the invoice is already committed.
+	 *
+	 * @param   int         $contact_list	0: Returned array of contacts/addresses contains all properties, 1: Return array contains just id, -1: Do not return contacts/addresses
+	 * @return	Object						Object with cleaned properties
+	 */
+	private function _renderInvoice($contact_list = 1)
+	{
 		// Get payment details
 		$this->invoice->totalpaid = $this->invoice->getSommePaiement();
 		$this->invoice->totalcreditnotes = $this->invoice->getSumCreditNotesUsed();
@@ -355,11 +371,12 @@ class Invoices extends DolibarrApi
 	 * @since	3.8.0	Initial implementation
 	 *
 	 * @param array $request_data   Request data
+	 * @param bool  $returnfull      Set to true to return the complete invoice object (same content as GET /invoices/{id}) instead of only its id
 	 * @phan-param ?array<string,string> $request_data
 	 * @phpstan-param ?array<string,string> $request_data
-	 * @return int                  ID of invoice
+	 * @return int|Object            ID of invoice, or object with cleaned properties when $returnfull is set
 	 */
-	public function post($request_data = null)
+	public function post($request_data = null, $returnfull = false)
 	{
 		global $conf;
 		if (!DolibarrApiAccess::$user->hasRight('facture', 'creer')) {
@@ -369,6 +386,9 @@ class Invoices extends DolibarrApi
 		if (!is_array($request_data)) {
 			$request_data = array();
 		}
+
+		// The flag can also be sent into the body, so remove it to not try to set it as an invoice property
+		unset($request_data['returnfull']);
 
 		// Check mandatory fields (not using output, only possible exception is important)
 		$this->_validate($request_data);
@@ -414,6 +434,13 @@ class Invoices extends DolibarrApi
 		if ($this->invoice->create(DolibarrApiAccess::$user, 0, (empty($request_data["date_lim_reglement"]) ? 0 : $request_data["date_lim_reglement"])) < 0) {
 			throw new RestException(500, "Error creating invoice", array_merge(array($this->invoice->error), $this->invoice->errors));
 		}
+		if ($returnfull) {
+			// Reload the invoice so the lines are loaded (they are needed to compute the payment totals)
+			$this->invoice->fetch($this->invoice->id);
+
+			return $this->_renderInvoice(1);
+		}
+
 		return ((int) $this->invoice->id);
 	}
 
